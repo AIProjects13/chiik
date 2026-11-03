@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="CHIIK · Registro avícola: producción de granjas de postura, engorde, reproductoras e incubadora.">
+    <meta name="theme-color" content="#0B2545">
+    <link rel="icon" href="img/chiik-icono.svg" type="image/svg+xml">
+    <!-- Política de seguridad: solo se ejecuta código propio y de Firebase, y solo se conecta
+         al inicio de sesión y al servidor de la plataforma. Bloquea scripts inyectados y fugas de datos. -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' https://www.gstatic.com/firebasejs/10.12.2/ https://challenges.cloudflare.com;
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+        font-src https://fonts.gstatic.com;
+        img-src 'self' data: blob:;
+        connect-src https://script.google.com https://script.googleusercontent.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;
+        frame-src https://challenges.cloudflare.com;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self'">
+    <meta name="referrer" content="no-referrer">
+    <title>CHIIK · Registro avícola</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Inter:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script src="boot-check.js" defer></script>
+    <script type="module" src="app.js"></script>
+</head>
+
+<body>
+    <noscript>
+        <p class="noscript">La plataforma necesita JavaScript habilitado.</p>
+    </noscript>
+
+    <!-- ===================== Pantalla: cargando ===================== -->
+    <div id="screen-loading" class="screen screen-center" role="status" aria-live="polite">
+        <div class="brand brand-lg">
+            <img class="brand-logo" src="img/chiik-logo-claro.svg" alt="CHIIK" width="398" height="132">
+            <span class="brand-tag">Registro avícola</span>
+        </div>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-text" class="muted">Cargando…</p>
+    </div>
+
+    <!-- ===================== Pantalla: inicio de sesión ===================== -->
+    <main id="screen-login" class="screen auth-screen" hidden>
+        <section class="auth-card" aria-labelledby="login-title">
+            <div class="brand brand-lg">
+                <img class="brand-logo" src="img/chiik-logo-claro.svg" alt="CHIIK" width="398" height="132">
+                <span class="brand-tag">Registro avícola</span>
+            </div>
+            <h1 id="login-title">Inicia sesión</h1>
+            <p class="muted">Usa el correo y la contraseña que te entregó la administración.</p>
+
+            <form id="login-form" data-submit="login" class="stack" novalidate>
+                <label class="field">
+                    <span>Correo electrónico</span>
+                    <input type="email" name="email" autocomplete="username" inputmode="email" required>
+                </label>
+                <label class="field">
+                    <span>Contraseña</span>
+                    <span class="password-field">
+                        <input type="password" name="password" autocomplete="current-password" required minlength="6">
+                        <button type="button" class="password-toggle" data-action="toggle-password" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"><span data-icon="eye"></span></button>
+                    </span>
+                </label>
+                <div class="humano" id="humano" hidden></div>
+                <p class="form-error" role="alert" hidden></p>
+                <button type="submit" class="btn btn-primary btn-block">Entrar</button>
+                <button type="button" class="btn btn-link" data-action="forgot-password">¿Olvidaste tu contraseña?</button>
+            </form>
+        </section>
+        <p class="auth-foot muted">El acceso lo otorga únicamente la administración.</p>
+        <p class="firma">Powered by Pixan Tech<br>por Fernando Gaitán</p>
+    </main>
+
+    <!-- ===================== Pantalla: sin acceso ===================== -->
+    <main id="screen-denied" class="screen auth-screen" hidden>
+        <section class="auth-card">
+            <div class="brand brand-lg">
+                <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+            </div>
+            <h1 id="denied-title">Sin acceso</h1>
+            <p id="denied-text" class="muted"></p>
+            <div id="denied-actions" class="stack"></div>
+            <button type="button" class="btn btn-ghost btn-block" data-action="logout">Cerrar sesión</button>
+        </section>
+    </main>
+
+    <!-- ===================== Pantalla: cambio obligatorio de contraseña ===================== -->
+    <main id="screen-password" class="screen auth-screen" hidden>
+        <section class="auth-card" aria-labelledby="password-title">
+            <div class="brand brand-lg">
+                <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg></span>
+            </div>
+            <h1 id="password-title">Crea tu contraseña</h1>
+            <p class="muted">Por seguridad, reemplaza la contraseña temporal de <strong id="password-email"></strong> antes de continuar.</p>
+
+            <form id="password-form" data-submit="change-password" class="stack" novalidate>
+                <label class="field">
+                    <span>Nueva contraseña</span>
+                    <span class="password-field">
+                        <input type="password" name="p1" autocomplete="new-password" required minlength="10">
+                        <button type="button" class="password-toggle" data-action="toggle-password" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"><span data-icon="eye"></span></button>
+                    </span>
+                    <small class="field-hint">Mínimo 10 caracteres, con mayúsculas, minúsculas y números.</small>
+                </label>
+                <label class="field">
+                    <span>Repite la contraseña</span>
+                    <span class="password-field">
+                        <input type="password" name="p2" autocomplete="new-password" required minlength="10">
+                        <button type="button" class="password-toggle" data-action="toggle-password" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"><span data-icon="eye"></span></button>
+                    </span>
+                </label>
+                <p class="form-error" role="alert" hidden></p>
+                <button type="submit" class="btn btn-primary btn-block">Guardar y entrar</button>
+            </form>
+            <button type="button" class="btn btn-ghost btn-block" data-action="logout">Cerrar sesión</button>
+        </section>
+    </main>
+
+    <!-- ===================== Aplicación ===================== -->
+    <div id="screen-app" class="app-shell" hidden>
+        <aside id="sidebar" class="sidebar" aria-label="Menú principal">
+            <div class="brand">
+                <img class="brand-logo" src="img/chiik-logo-claro.svg" alt="CHIIK" width="398" height="132">
+                <span class="brand-tag">Registro avícola</span>
+            </div>
+            <nav id="nav" class="nav"></nav>
+            <div class="sidebar-foot">
+                <div id="user-chip" class="user-chip"></div>
+                <button type="button" class="btn btn-sm btn-block" data-action="logout"><span data-icon="log-out"></span>Cerrar sesión</button>
+                <p class="firma">Powered by Pixan Tech<br>por Fernando Gaitán</p>
+            </div>
+        </aside>
+        <div class="sidebar-backdrop" data-action="toggle-sidebar" aria-hidden="true"></div>
+
+        <div class="main">
+            <header class="topbar">
+                <button type="button" id="menu-btn" class="icon-btn" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="false" aria-label="Mostrar u ocultar el menú" title="Menú"><span data-icon="menu"></span></button>
+                <h1 id="page-title" class="page-title"></h1>
+                <button type="button" class="icon-btn" data-action="sync" aria-label="Actualizar datos" title="Actualizar datos"><span data-icon="rotate-cw"></span></button>
+            </header>
+            <div id="busy-bar" class="busy-bar" aria-hidden="true"></div>
+            <section id="view" class="view" tabindex="-1"></section>
+        </div>
+    </div>
+
+    <!-- Modal genérico (el contenido lo genera app.js) -->
+    <dialog id="modal" class="modal" aria-modal="true"></dialog>
+
+    <!-- Notificaciones -->
+    <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+
+</html>

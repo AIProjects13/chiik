@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -8 108 108" role="img" aria-label="CHIIK"><title>CHIIK</title><rect x="-6" y="-8" width="108" height="108" fill="#0B2545"/><g>
+  <rect x="4" y="76" width="7" height="6" fill="#00A388"/>
+  <rect x="15" y="66" width="9" height="16" fill="#3DBCA5"/>
+  <rect x="28" y="58" width="9" height="24" fill="#7DD3C3"/>
+  <rect x="41" y="50" width="9" height="32" fill="#BDEAE1"/>
+  <rect x="34" y="84" width="3" height="8" fill="#E0A100"/>
+  <rect x="43" y="84" width="3" height="8" fill="#E0A100"/>
+  <rect x="54" y="14" width="28" height="28" rx="6" fill="#FFFFFF"/>
+  <rect x="70" y="22" width="6" height="6" fill="#0B2545"/>
+  <path d="M82 22H92L82 34Z" fill="#E0A100"/>
+  <path d="M54 46H82V62A20 20 0 0 1 62 82H54Z" fill="#FFFFFF"/>
+  <rect x="56" y="8" width="7" height="5" fill="#D7443E"/>
+  <rect x="63" y="4" width="7" height="9" fill="#D7443E"/>
+  <rect x="70" y="0" width="7" height="13" fill="#D7443E"/>
+  <rect x="83" y="35" width="7.5" height="10.5" rx="1.2" fill="#D7443E"/>
+</g></svg>
