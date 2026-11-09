@@ -83,7 +83,7 @@ const emptyDb = () => ({
     geneticaDe: {}, iecRangos: [], diasRetroactivos: 7, maxMuestra: 1000, estandares: [], tiposEstandar: [],
     enfermedades: [], metodosSerologia: [], pruebasSerologia: {}, deventer: {}, produccion: {},
 });
-const filtrosIniciales = () => ({ desde: daysAgo(CONFIG.RANGO_INICIAL_DIAS), hasta: today(), granjas: [], agrupar: 'semana', eliminados: false, sector: '', nave: '' });
+const filtrosIniciales = () => ({ desde: daysAgo(CONFIG.RANGO_INICIAL_DIAS), hasta: today(), granjas: [], agrupar: 'semana', eliminados: false, sector: '', nave: '', lote: '', genetica: '' });
 
 const state = {
     user: null,
@@ -589,7 +589,10 @@ function claveSemana(r) {
  * último registro de cada lote del grupo y se suman entre lotes; la conversión es alimento total ÷
  * ganancia total.
  */
-const POR_AVES = new Set(['MortalidadPorcentaje', 'ConsumoGramosAveDia', 'PosturaPorcentaje', 'PesoCorporalReal']);
+// La tabla de la línea genética se promedia igual que el dato real (por aves): con varias líneas
+// genéticas a la vez, cada lote pesa según sus aves.
+const POR_AVES = new Set(['MortalidadPorcentaje', 'ConsumoGramosAveDia', 'PosturaPorcentaje', 'PesoCorporalReal',
+    'PesoCorporalTabla', 'PosturaTabla', 'ConsumoTabla', 'MortalidadIdeal']);
 const ULTIMO_LOTE = new Set(['NumeroAves', 'MortalidadAcumulada']);
 const claveLote = r => r.LoteID || r.NaveID || r.GranjaID;
 function aggregate(regs, campos, keyFn) {
@@ -1030,6 +1033,62 @@ function ubicacionFilters() {
         `<option value="${esc(n.NaveID)}"${n.NaveID === state.f.nave ? ' selected' : ''}>${state.f.sector ? '' : esc(s.Nombre) + ' / '}${esc(n.Nombre)}${inactivo(n)}</option>`).join('')}</select></label>`;
 }
 
+/** Lotes de la línea en el contexto (granjas, sector y nave elegidos), para el filtro de lote. */
+function lotesDelContexto() {
+    const ids = ctxIds();
+    let lotes = state.db.lotes.filter(l => ids.includes(l.GranjaID) && l.Linea === state.linea && l.Estado !== 'Eliminado');
+    if (state.f.nave) lotes = lotes.filter(l => navesDelLote(l).some(x => x.NaveID === state.f.nave));
+    else if (state.f.sector) lotes = lotes.filter(l => navesDelLote(l).some(x => naveById(x.NaveID)?.SectorID === state.f.sector));
+    return lotes.sort((a, b) => (a.Estado === b.Estado ? String(b.FechaInicio).localeCompare(String(a.FechaInicio)) : a.Estado === 'Activo' ? -1 : 1));
+}
+/** Filtro de línea genética y de lote (se aplica en la app sobre lo que trae el servidor). */
+function loteFilters() {
+    const lotes = lotesDelContexto();
+    if (!lotes.length) return '';
+    const geneticas = [...new Set(lotes.map(l => l.LineaGenetica).filter(Boolean))].sort();
+    if (state.f.genetica && !geneticas.includes(state.f.genetica)) state.f.genetica = '';
+    const visibles = lotes.filter(l => !state.f.genetica || l.LineaGenetica === state.f.genetica);
+    if (state.f.lote && !visibles.some(l => l.LoteID === state.f.lote)) state.f.lote = '';
+    const variasG = varias() && ctxIds().length > 1;
+    const nombre = l => `Lote ${l.NumeroLote} · ${navesDelLote(l).map(x => naveById(x.NaveID)?.Nombre).filter(Boolean).join(', ')}${variasG ? ` · ${granjaName(l.GranjaID)}` : ''}${l.Estado !== 'Activo' ? ' (cerrado)' : ''}`;
+    return `${geneticas.length > 1 ? `<label class="field"><span>Línea genética</span><select data-change="f-genetica"><option value="">Todas</option>${geneticas.map(g =>
+        `<option${g === state.f.genetica ? ' selected' : ''}>${esc(g)}</option>`).join('')}</select></label>` : ''}
+        <label class="field"><span>Lote</span><select data-change="f-lote"><option value="">Todos</option>${visibles.map(l =>
+        `<option value="${esc(l.LoteID)}"${l.LoteID === state.f.lote ? ' selected' : ''}>${esc(nombre(l))}</option>`).join('')}</select></label>`;
+}
+/** Deja solo los datos del lote y de la línea genética elegidos en el filtro. */
+function filtrarLote(rows) {
+    const { lote, genetica } = state.f;
+    if (!lote && !genetica) return rows;
+    return rows.filter(r => (!lote || r.LoteID === lote) && (!genetica || (r.LineaGenetica || loteById(r.LoteID)?.LineaGenetica) === genetica));
+}
+/**
+ * Aviso de las líneas genéticas sin tabla cargada (peso, y en postura también la producción) y de los
+ * lotes sin edad al iniciar: sin eso no se puede dibujar el estándar ni el ideal.
+ */
+function avisoTablas(regs, linea) {
+    if (linea === 'Incubadora') return '';
+    const tipo = tipoEstandar(linea);
+    const lotes = [...new Set(regs.map(r => r.LoteID))].map(loteById).filter(Boolean);
+    const sinEdad = lotes.filter(l => edadDias(l, l.FechaInicio) === null);
+    const porGen = new Map();
+    lotes.filter(l => l.LineaGenetica).forEach((l) => {
+        const faltan = [];
+        if (!state.db.estandares.some(x => x.LineaGenetica === l.LineaGenetica && x.Tipo === tipo)) faltan.push('peso');
+        if (linea === 'Postura' && !state.db.produccion?.[`${l.LineaGenetica}|${tipo}`]) faltan.push('producción');
+        if (!faltan.length) return;
+        const g = porGen.get(l.LineaGenetica) || { faltan, lotes: [] };
+        g.lotes.push(l.NumeroLote);
+        porGen.set(l.LineaGenetica, g);
+    });
+    let html = '';
+    if (porGen.size) {
+        html += alertBox('info', 'info', `<strong>Sin tabla cargada de la línea genética:</strong> ${[...porGen].map(([gen, g]) => `${esc(gen)} (${esc(g.faltan.join(' y '))}; lote${g.lotes.length > 1 ? 's' : ''} ${esc(g.lotes.join(', '))})`).join(' · ')}. Por eso no se dibuja su estándar ni su ideal. La administración de CHIIK la carga con la guía oficial de la casa genética.`);
+    }
+    if (sinEdad.length) html += alertBox('warn', 'alert-triangle', `Sin edad de las aves al iniciar: lote ${esc(sinEdad.map(l => l.NumeroLote).join(', '))}. Sin ella no se compara con la tabla; complétela en "Editar lote".`);
+    return html;
+}
+
 function unidadToggle() {
     return `<div class="filter-group"><span class="field-label">Ver pesos en</span><div class="segmented" role="group" aria-label="Unidad de peso">${Object.keys(UNIDADES).map(u =>
         `<button type="button" class="seg${u === state.unidad ? ' is-active' : ''}" data-action="set-unidad" data-unidad="${u}" aria-pressed="${u === state.unidad}" title="${UNIDAD_NOMBRE[u]}">${u}</button>`).join('')}</div></div>`;
@@ -1047,7 +1106,7 @@ function filtersCard({ lineas = true, fechas = true, agrupar = false, eliminados
     return `<div class="card filters-card"><div class="filters">
         ${empresaPicker()}${varias() ? granjaPicker() : granjaSwitch()}
         ${lineas ? lineaTabs(disp) : ''}
-        ${lineas && ubicacion ? ubicacionFilters() : ''}
+        ${lineas && ubicacion ? ubicacionFilters() + loteFilters() : ''}
         ${extra}
         ${fechas ? dateFilters() : ''}
         ${agrupar ? `<div class="filter-group"><span class="field-label">Agrupar por</span><div class="segmented" role="group" aria-label="Agrupar por">${AGRUPAR.map(([k, l]) =>
@@ -1147,13 +1206,14 @@ function viewDashboard() {
     if (!r.ok) return head + errorBlock(r);
 
     const linea = state.linea;
-    const regs = r.data.registros;
+    const regs = filtrarLote(r.data.registros);
     const campos = camposNumericos(linea);
     const agr = state.f.agrupar;
     const rango = state.f.desde || state.f.hasta ? `${fmtDate(state.f.desde) || 'inicio'} a ${fmtDate(state.f.hasta) || 'hoy'}` : 'Todo el historial';
     const ub = filtroUbicacion();
     const contexto = [varias() ? (state.f.granjas.length ? state.f.granjas.map(granjaName).join(', ') : 'Todas las granjas') : granjaName(state.granjaId),
-        ub.SectorID && sectorById(ub.SectorID)?.Nombre, ub.NaveID && naveById(ub.NaveID)?.Nombre].filter(Boolean).join(' · ');
+        ub.SectorID && sectorById(ub.SectorID)?.Nombre, ub.NaveID && naveById(ub.NaveID)?.Nombre,
+        state.f.genetica, state.f.lote && `Lote ${loteById(state.f.lote)?.NumeroLote || ''}`].filter(Boolean).join(' · ');
 
     let html = head;
     if (r.data.truncado) html += alertBox('warn', 'alert-triangle', 'Hay más registros de los que se pueden analizar a la vez. Reduce el rango de fechas para ver todo.');
@@ -1186,6 +1246,17 @@ function viewDashboard() {
     // Panorama (como un tablero de Power BI): medidor, dona y comparativo horizontal.
     html += panorama(linea, regs, campos, tot, rango);
 
+    html += avisoTablas(regs, linea);
+    // Nombre de la serie de tabla según las líneas genéticas que hay en lo que se muestra: una (su nombre)
+    // o varias (el promedio de las que tienen tabla).
+    const genDe = r => r.LineaGenetica || loteById(r.LoteID)?.LineaGenetica;
+    const genTodas = [...new Set(regs.map(genDe).filter(Boolean))];
+    const nombreTabla = (name, key) => {
+        const con = genTodas.filter(g => regs.some(r => genDe(r) === g && toNum(r[key]) !== null));
+        if (genTodas.length <= 1) return genTodas.length ? `${name} · ${genTodas[0]}` : name;
+        if (con.length === 1) return `${name} · ${con[0]} (las demás no tienen tabla)`;
+        return con.length ? `${name} (promedio de ${con.length} líneas genéticas)` : name;
+    };
     // Tendencias por periodo
     // Por semana: semana de EDAD del lote ("Semana 23"); día y mes, de calendario.
     const grupos = aggregate(regs, campos.concat(CAMPOS_BANDA), x => (agr === 'semana' ? claveSemana(x) : periodo(x.Fecha, agr)));
@@ -1196,7 +1267,7 @@ function viewDashboard() {
             title: def.peso ? `${def.title} (${state.unidad})` : def.title, subtitle: sub, icon: def.icon, type: def.type,
             unit: def.peso ? state.unidad : def.unit, labels,
             series: def.series.map(([key, name, color, dashed]) => ({
-                name, color: PALETTE[color], dashed, stack: def.stack ? 'h' : undefined,
+                name: dashed ? nombreTabla(name, key) : name, color: PALETTE[color], dashed, stack: def.stack ? 'h' : undefined,
                 data: grupos.map(g => { const c = pc(key); return c ? gShow(g, c) : null; }),
             })),
         };
@@ -1339,7 +1410,7 @@ function viewRegistros() {
     html += table('registros', {
         title: `Registros de ${linea.toLowerCase()}`, icon: LINEA_ICON[linea], csv: `registros-${linea}`,
         empty: `No hay registros de ${linea.toLowerCase()} en el rango seleccionado.`,
-        columns, rows: r.data.registros,
+        columns, rows: filtrarLote(r.data.registros),
         rowClass: x => (x.Estado !== 'Activo' ? 'is-deleted' : ''),
         actions: (x) => {
             const flag = x.Alterado ? `<span class="badge badge-danger" title="Modificado fuera de la plataforma">${ico('lock', 'icon-sm')}</span>` : '';
@@ -1391,7 +1462,7 @@ function viewPesajes() {
 
     return head + nuevo + table('pesajes', {
         title: `Pesajes de ${linea.toLowerCase()}`, icon: 'scale', csv: `pesajes-${linea}`,
-        empty: 'No hay pesajes en el rango seleccionado.', columns, rows: r.data.pesajes,
+        empty: 'No hay pesajes en el rango seleccionado.', columns, rows: filtrarLote(r.data.pesajes),
         rowClass: x => (x.Estado !== 'Activo' ? 'is-deleted' : ''),
         actions: x => `<button type="button" class="icon-btn icon-btn-sm" data-action="ver-pesaje" data-id="${esc(x.PesajeID)}" title="Ver los pesos" aria-label="Ver los pesos">${ico('list-checks')}</button>`
             + (x.Estado === 'Activo' && !modificable(x.Fecha) ? sinPermisoFecha() : '')
@@ -2509,7 +2580,7 @@ function viewSerologia() {
     const cuerpo = (() => {
         if (!r) return loadingBlock(1);
         if (!r.ok) return errorBlock(r);
-        const filas = state.srEnfs.length > 1 ? r.data.serologias.filter(x => state.srEnfs.includes(x.EnfermedadID)) : r.data.serologias;
+        const filas = filtrarLote(state.srEnfs.length > 1 ? r.data.serologias.filter(x => state.srEnfs.includes(x.EnfermedadID)) : r.data.serologias);
         state.serologias = new Map(filas.map(x => [x.SerologiaID, x]));
         const graficos = metodo ? seroCharts(filas, metodo)
             : state.srEnfs.length > 1 ? seroComparar(filas, state.srEnfs) + seroPanorama(filas)
@@ -5006,6 +5077,8 @@ const CHANGES = {
     'granja-activa': (el) => { state.granjaId = el.value; state.f.sector = ''; state.f.nave = ''; ensureLinea(ctxIds()); render(); },
     'f-sector': el => setFiltro({ sector: el.value, nave: '' }),
     'f-nave': el => setFiltro({ nave: el.value }),
+    'f-lote': el => setFiltro({ lote: el.value }),
+    'f-genetica': el => setFiltro({ genetica: el.value, lote: '' }),
     'ubic-info': (el) => {
         const f = el.form;
         const box = f.querySelector('[data-ubic-info]');

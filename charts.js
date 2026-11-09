@@ -114,7 +114,7 @@ function draw(ctx, w, h, spec, { hover = null, exporting = false } = {}) {
     // Una serie de tabla (punteada) sin ningún dato: la guía de la línea genética no lo publica. Se dice en
     // la leyenda en lugar de mostrar una línea que no aparece.
     const sinDatos = s => s.dashed && s.data.every(v => v === null || v === undefined);
-    const conAviso = spec.series.map(s => (sinDatos(s) ? { ...s, name: `${s.name} (la guía no publica este dato)` } : s));
+    const conAviso = spec.series.map(s => (sinDatos(s) ? { ...s, name: `${s.name} (sin datos de la tabla)` } : s));
     const leyenda = spec.band ? conAviso.concat([{ name: spec.band.name, color: spec.band.color, banda: true }]) : conAviso;
     const items = leyenda.map(s => ({ s, w: 26 + ctx.measureText(s.name).width + 18 }));
     const rows = [[]];
