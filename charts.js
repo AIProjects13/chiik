@@ -111,7 +111,11 @@ function draw(ctx, w, h, spec, { hover = null, exporting = false } = {}) {
     // Leyenda centrada (con salto de línea si no cabe).
     ctx.font = `600 ${fs}px ${FONT}`;
     ctx.textBaseline = 'middle';
-    const leyenda = spec.band ? spec.series.concat([{ name: spec.band.name, color: spec.band.color, banda: true }]) : spec.series;
+    // Una serie de tabla (punteada) sin ningún dato: la guía de la línea genética no lo publica. Se dice en
+    // la leyenda en lugar de mostrar una línea que no aparece.
+    const sinDatos = s => s.dashed && s.data.every(v => v === null || v === undefined);
+    const conAviso = spec.series.map(s => (sinDatos(s) ? { ...s, name: `${s.name} (la guía no publica este dato)` } : s));
+    const leyenda = spec.band ? conAviso.concat([{ name: spec.band.name, color: spec.band.color, banda: true }]) : conAviso;
     const items = leyenda.map(s => ({ s, w: 26 + ctx.measureText(s.name).width + 18 }));
     const rows = [[]];
     let rowW = 0;
@@ -162,14 +166,21 @@ function draw(ctx, w, h, spec, { hover = null, exporting = false } = {}) {
         ctx.fillText(axisFmt(t), L - 8, yy);
     });
 
-    // Etiquetas del eje X (se saltan las que no caben)
+    // Etiquetas del eje X: si no caben, se acortan ("Semana 28" → "S28", "Día 5" → "D5") y se muestran
+    // cada N, sin encimarse ni salirse del gráfico.
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    const maxLabelW = Math.max(1, ...spec.labels.map(l => ctx.measureText(String(l)).width)) + 10;
+    const anchoDe = ls => Math.max(1, ...ls.map(l => ctx.measureText(String(l)).width)) + 12;
+    let etiquetas = spec.labels.map(String);
+    if (anchoDe(etiquetas) > band) etiquetas = etiquetas.map(l => l.replace(/^Semana\s+/i, 'S').replace(/^Sem\.\s+/i, 'S').replace(/^Día\s+/i, 'D'));
+    const maxLabelW = anchoDe(etiquetas);
     const step = Math.max(1, Math.ceil(maxLabelW / band));
-    spec.labels.forEach((l, i) => {
-        if (i % step !== 0 && i !== n - 1) return;
-        if (i === n - 1 && i % step !== 0 && (n - 1) % step < step / 2) return;
-        ctx.fillText(String(l), xc(i), T + ph + 8);
+    let ultima = -Infinity;
+    etiquetas.forEach((l, i) => {
+        if (i % step !== 0) return;
+        const x = Math.min(Math.max(xc(i), L + maxLabelW / 2 - 6), L + pw - maxLabelW / 2 + 6);
+        if (x - ultima < maxLabelW) return;
+        ctx.fillText(l, x, T + ph + 8);
+        ultima = x;
     });
 
     if (!n) {

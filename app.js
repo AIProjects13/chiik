@@ -597,7 +597,7 @@ function aggregate(regs, campos, keyFn) {
     regs.forEach((r) => {
         const k = keyFn(r);
         let g = map.get(k);
-        if (!g) { g = { key: k, n: 0, s: {}, c: {}, w: {}, wd: {}, last: new Map(), alim: 0, gan: 0 }; map.set(k, g); }
+        if (!g) { g = { key: k, n: 0, s: {}, c: {}, w: {}, wd: {}, last: new Map(), alim: 0, gan: 0, qqDoc: 0, huevos: 0 }; map.set(k, g); }
         g.n++;
         const aves = toNum(r.NumeroAves);
         campos.forEach((c) => {
@@ -609,6 +609,9 @@ function aggregate(regs, campos, keyFn) {
         });
         const alim = toNum(r.AlimentoKg), gan = toNum(r.GananciaKg);
         if (alim !== null && gan > 0) { g.alim += alim; g.gan += gan; }
+        // Postura: alimento por docena = Σ alimento ÷ (Σ huevos ÷ 12), de los días con ambos datos.
+        const qq = toNum(r.ConsumoQuintalesTotal), hv = toNum(r.PosturaNominal);
+        if (qq !== null && hv > 0) { g.qqDoc += qq; g.huevos += hv; }
         const prev = g.last.get(claveLote(r));
         if (!prev || String(r.Fecha) > String(prev.Fecha)) g.last.set(claveLote(r), r);
     });
@@ -623,6 +626,7 @@ function gUltimo(g, k) {
 function gAvg(g, k) {
     if (!g) return null;
     if (k === 'ConversionAlimenticia' && g.gan > 0) return g.alim / g.gan;
+    if (k === 'AlimentoPorDocena') return g.huevos > 0 ? g.qqDoc * KG_QUINTAL * 1000 / (g.huevos / 12) : null;
     if (k === 'MortalidadAcumuladaPorcentaje') {
         let m = 0, ini = 0;
         g.last.forEach((r) => { const a = toNum(r.MortalidadAcumulada), i = toNum(r.AvesIniciales); if (a !== null && i > 0) { m += a; ini += i; } });
@@ -641,6 +645,7 @@ function gShow(g, c) {
     if (v === null) return null;
     return c.peso ? round(enUnidad(v), decimalesPeso()) : round(v);
 }
+const KG_QUINTAL = 45.359237;
 function round(v, d = 2) { return v === null || v === undefined ? null : Math.round(v * 10 ** d) / 10 ** d; }
 
 /** Gráficos por línea: [campo, nombre de la serie, color, punteada]. Los pesos usan la unidad elegida. */
@@ -658,10 +663,13 @@ const CAMPOS_BANDA = [{ k: 'PesoTablaMinimo', agg: 'promedio', peso: true }, { k
 const CHARTS = {
     Reproductora: CHARTS_ZOO,
     Engorde: CHARTS_ZOO,
+    // En postura, la conversión es huevo producido contra alimento (por docena y por kg de huevo).
     Postura: [
         { id: 'postura', title: 'Postura / huevo (%)', icon: 'egg', unit: '%', type: 'area', series: [['PosturaPorcentaje', 'Postura real', 'primary'], ['PosturaTabla', 'Tabla', 'tabla', true]] },
         { id: 'huevo', title: 'Clasificación de huevo', icon: 'chart-column', type: 'bar', stack: true, series: [['HuevoPiwi', 'Piwi', 'o1'], ['HuevoMediano', 'Mediano', 'o2'], ['HuevoGrande', 'Grande', 'o3'], ['HuevoExtragrande', 'Extragrande', 'o4']] },
-    ].concat(CHARTS_ZOO),
+        { id: 'docena', title: 'Alimento por docena de huevos', icon: 'wheat', type: 'line', peso: true, series: [['AlimentoPorDocena', 'Alimento por docena', 'primary']] },
+        { id: 'conversion', title: 'Conversión (kg alimento / kg huevo)', icon: 'wheat', type: 'line', series: [['ConversionAlimenticia', 'kg de alimento por kg de huevo', 'primary']] },
+    ].concat(CHARTS_ZOO.filter(c => c.id !== 'conversion')),
     Incubadora: [
         { id: 'nacimiento', title: '% de nacimiento', icon: 'egg', unit: '%', type: 'area', series: [['PorcentajeNacimiento', 'Nacimiento ÷ huevo incubable', 'primary']] },
         { id: 'huevos', title: 'Huevos y nacimientos', icon: 'chart-column', type: 'bar', series: [['HuevoIncubable', 'Huevo incubable', 'o1'], ['HuevoTransferencia', 'Huevo de transferencia', 'o3'], ['Nacimiento', 'Nacimiento', 'o4']] },
@@ -1167,7 +1175,10 @@ function viewDashboard() {
             + kpi('Mortalidad acumulada', ind.mortAcum !== null ? `${fmtNum(round(ind.mortAcum, 2))} %` : '—', ind.mortAcum !== null ? `${nf.format(ind.muertasAcum)} de ${nf.format(ind.iniciales)} aves iniciales (lotes abiertos)` : 'Los lotes abiertos no tienen aves iniciales', 'activity')
             + kpi('Consumo', `${fmtNum(gSum(tot, 'ConsumoQuintalesTotal'))} qq`, `${fmtNum(round(gAvg(tot, 'ConsumoGramosAveDia'), 1))} g/ave/día (ponderado por aves)`, 'wheat')
             + kpi('Peso corporal', fmtPeso(ind.peso), ind.peso !== null ? `Tabla ${fmtPeso(ind.pesoTabla)} · último pesaje de cada lote abierto` : 'Sin pesajes de lotes abiertos', 'scale')
-            + kpi('Conversión', fmtNum(round(gAvg(tot, 'ConversionAlimenticia'), 3)), 'kg de alimento ÷ kg ganados', 'wheat');
+            + (linea === 'Postura'
+                ? kpi('Alimento por docena', fmtPeso(gAvg(tot, 'AlimentoPorDocena')), 'Alimento ÷ docenas de huevo', 'wheat')
+                    + kpi('Conversión', fmtNum(round(gAvg(tot, 'ConversionAlimenticia'), 3)), gAvg(tot, 'ConversionAlimenticia') !== null ? 'kg de alimento ÷ kg de huevo' : 'Anote el peso promedio del huevo para calcularla', 'wheat')
+                : kpi('Conversión', fmtNum(round(gAvg(tot, 'ConversionAlimenticia'), 3)), 'kg de alimento ÷ kg ganados', 'wheat'));
         if (linea === 'Postura') k += kpi('Postura', `${fmtNum(round(gAvg(tot, 'PosturaPorcentaje'), 2))} %`, `Huevos ÷ aves del día · tabla ${fmtNum(round(gAvg(tot, 'PosturaTabla'), 2))}`, 'egg');
     }
     html += `<div class="kpis">${k}</div>`;
@@ -1695,12 +1706,13 @@ function naveCard(n) {
     return `<div class="nave${activa ? '' : ' is-inactive'}">
         <div class="nave-head"><strong>${ico('house', 'icon-sm')}${esc(n.Nombre)}</strong>${activa ? '' : badgeEstado('Inactivo')}</div>
         ${loteHtml}
+        ${activa ? referenciasNaveHtml(n) : ''}
         <div class="row row-center">
             ${activa && !lote ? `<button type="button" class="btn btn-sm btn-primary" data-action="new-lote" data-id="${esc(n.NaveID)}">${ico('tag')}Iniciar lote</button>` : ''}
             ${lote ? `<button type="button" class="btn btn-sm" data-action="edit-lote" data-id="${esc(lote.LoteID)}">${ico('tag')}Editar lote</button>
                 <button type="button" class="btn btn-sm" data-action="lote-naves" data-id="${esc(lote.LoteID)}">${ico('house')}Naves del lote</button>
                 <button type="button" class="btn btn-sm" data-action="cerrar-lote" data-id="${esc(lote.LoteID)}">Cerrar lote</button>` : ''}
-            <button type="button" class="icon-btn icon-btn-sm" data-action="edit-nave" data-id="${esc(n.NaveID)}" title="Renombrar nave" aria-label="Renombrar nave">${ico('pencil')}</button>
+            <button type="button" class="icon-btn icon-btn-sm" data-action="edit-nave" data-id="${esc(n.NaveID)}" title="Editar nave (nombre y medidas)" aria-label="Editar nave">${ico('pencil')}</button>
             <button type="button" class="icon-btn icon-btn-sm" data-action="estado-nave" data-id="${esc(n.NaveID)}" title="${activa ? 'Desactivar' : 'Activar'} nave" aria-label="${activa ? 'Desactivar' : 'Activar'} nave">${ico(activa ? 'circle-pause' : 'circle-play')}</button>
             ${tieneLotes ? '' : `<button type="button" class="icon-btn icon-btn-sm danger" data-action="delete-nave" data-id="${esc(n.NaveID)}" title="Eliminar nave" aria-label="Eliminar nave">${ico('trash')}</button>`}
         </div>
@@ -3437,18 +3449,57 @@ async function openSectorModal(granjaId, linea, s = null) {
 
 async function openNaveModal(sectorId, n = null) {
     const s = sectorById(sectorId || n?.SectorID);
+    const linea = n?.Linea || s?.Linea;
+    // Postura y reproductora: tipo de nave (piso o jaula), nidales y bebederos de campana.
+    const conEquipo = linea === 'Postura' || linea === 'Reproductora';
+    const num = (k, l, ayuda, paso = '1') => `<label class="field"><span>${l}</span><input name="${k}" type="number" min="0" step="${paso}" inputmode="decimal" value="${esc(n?.[k] ?? '')}">${ayuda ? `<small class="field-hint">${ayuda}</small>` : ''}</label>`;
     await openModal({
-        title: n ? `Renombrar ${n.Nombre}` : `Nueva nave en ${s?.Nombre || ''}`,
+        title: n ? `Editar ${n.Nombre}` : `Nueva nave en ${s?.Nombre || ''}`,
         body: `<div class="form-grid"><label class="field span-all"><span>Nombre de la nave <span class="req">*</span></span><input name="Nombre" required maxlength="80" value="${esc(n?.Nombre || '')}" autocomplete="off"></label>
+            ${num('AreaM2', 'Área de la nave (m²)', `Para calcular las aves por m² (recomendado ${linea === 'Engorde' ? '10–12' : '6–7 en piso'}).`, '0.01')}
+            ${conEquipo ? `<label class="field"><span>Tipo de nave</span><select name="Tipo">${(state.db.tiposNave || ['Piso', 'Jaula']).map(t => `<option${(n?.Tipo || 'Piso') === t ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+                ${num('Nidales', 'Nidales', 'Recomendado: 4–5 nidales por cada 20 gallinas (en piso).')}
+                ${num('BebederosCampana', 'Bebederos de campana', 'Recomendado: un bebedero por cada 65–70 aves (en piso).')}` : ''}
             ${n ? justField('Los registros anteriores conservan el nombre que tenían.') : ''}</div>`,
         submitLabel: n ? 'Guardar' : 'Crear nave',
         onSubmit: async (fd) => {
-            const p = { Nombre: fd.get('Nombre') };
+            const p = { Nombre: fd.get('Nombre'), AreaM2: fd.get('AreaM2') };
+            if (conEquipo) Object.assign(p, { Tipo: fd.get('Tipo'), Nidales: fd.get('Nidales'), BebederosCampana: fd.get('BebederosCampana') });
             if (n) Object.assign(p, { NaveID: n.NaveID, justificacion: fd.get('justificacion') });
             else p.SectorID = sectorId;
-            await save('saveNave', p, n ? 'Nave renombrada.' : 'Nave creada.');
+            await save('saveNave', p, n ? 'Nave actualizada.' : 'Nave creada.');
         },
     });
+}
+
+/**
+ * Referencias de manejo de la nave (según su línea y tipo): aves por m², aves por nidal y aves por
+ * bebedero de campana, con las aves vivas de hoy. En un lote que se registra por lote, se usan las aves
+ * y las medidas de todas sus naves juntas.
+ */
+function referenciasNaveHtml(n) {
+    const refLinea = state.db.referenciasNave?.[n.Linea];
+    if (!refLinea || n.Linea === 'Incubadora') return '';
+    const tipo = n.Linea === 'Engorde' ? '' : (n.Tipo || 'Piso');
+    const ref = n.Linea === 'Engorde' ? refLinea : (refLinea[tipo] || {});
+    const info = state.db.avesNave?.[n.NaveID];
+    let naves = [n];
+    if (info?.lote) naves = navesVigentes(loteById(info.LoteID)).map(x => naveById(x.NaveID)).filter(Boolean);
+    const total = k => (naves.every(x => toNum(x[k]) !== null) ? naves.reduce((a, x) => a + toNum(x[k]), 0) : null);
+    const aves = info ? info.aves : null;
+    const fila = (nombre, divisor, rango, unidad, faltaTxt) => {
+        const r = rango ? `${rango[0]}–${rango[1]} ${unidad}` : '';
+        if (!divisor) return `<li><span>${nombre}</span><span class="muted">${esc(faltaTxt)}${r ? ` · recomendado ${r}` : ''}</span></li>`;
+        if (aves === null) return `<li><span>${nombre}</span><span class="muted">Sin lote abierto${r ? ` · recomendado ${r}` : ''}</span></li>`;
+        const v = aves / divisor;
+        const estado = !rango ? '' : v > rango[1] ? '<span class="badge badge-warn">Alto</span>' : v < rango[0] ? '<span class="badge badge-muted">Bajo</span>' : '<span class="badge badge-ok">Dentro</span>';
+        return `<li><span>${nombre}</span><span><strong>${esc(fmtNum(round(v, 1)))}</strong> ${unidad}${r ? ` <span class="muted">(recomendado ${r})</span>` : ''} ${estado}</span></li>`;
+    };
+    const filas = [fila('Densidad', total('AreaM2'), ref.densidad, 'aves/m²', 'Anote el área de la nave')];
+    if (ref.avesPorNidal) filas.push(fila('Nidales', total('Nidales'), ref.avesPorNidal, 'aves por nidal', 'Anote los nidales'));
+    if (ref.avesPorBebedero) filas.push(fila('Bebederos de campana', total('BebederosCampana'), ref.avesPorBebedero, 'aves por bebedero', 'Anote los bebederos'));
+    return `<div class="nave-ref"><span class="nave-ref-titulo">${ico('list-checks', 'icon-sm')}Referencias${tipo ? ` · ${esc(tipo.toLowerCase())}` : ''}${info?.lote ? ' · lote completo' : ''}</span>
+        ${tipo === 'Jaula' ? '<p class="muted">Sin referencias para jaula todavía.</p>' : ''}<ul>${filas.join('')}</ul></div>`;
 }
 
 /** Activar/desactivar un sector o una nave (lo pasado no cambia; lo nuevo se bloquea). */
@@ -5257,11 +5308,81 @@ function showPasswordScreen() {
     showScreen('password');
 }
 
+// ---------- Pantalla de carga: barra con porcentaje y buenas prácticas ----------
+// La carga real es una sola petición: la barra avanza sola hasta el 95 % (cada vez más despacio) y llega
+// al 100 % cuando los datos están listos. Mientras tanto se muestra una buena práctica avícola al azar.
+const CONSEJOS = [
+    'Anote los datos el mismo día: los registros a tiempo permiten detectar problemas antes de que crezcan.',
+    'Lave y desinfecte los bebederos con frecuencia; el agua limpia y fresca mejora el consumo.',
+    'Respete la densidad: en engorde, 10 a 12 aves por m²; en postura en piso, 6 a 7 aves por m².',
+    'En postura en piso, procure 4 a 5 nidales por cada 20 gallinas y recoja el huevo varias veces al día.',
+    'Un bebedero de campana alcanza para 65 a 70 aves; con menos bebederos baja el consumo de agua.',
+    'Mantenga un pediluvio con desinfectante a la entrada de cada nave y renuévelo seguido.',
+    'Restrinja las visitas: cada persona que entra a la granja puede traer enfermedades.',
+    'Retire la mortalidad todos los días y dispóngala lejos de las naves.',
+    'Pese una muestra de aves cada semana y compárela con la tabla de su línea genética.',
+    'En las horas de calor, ventile: la temperatura y la humedad altas causan estrés calórico.',
+    'En días de calor, asegure agua fresca antes que alimento.',
+    'Ajuste comederos y bebederos a la altura del lomo de las aves conforme crecen.',
+    'Siga el calendario de vacunación que le indique su veterinario.',
+    'Controle roedores y aves silvestres: transmiten enfermedades y se comen el alimento.',
+    'Guarde el alimento en un lugar seco, sobre tarimas y separado de las paredes.',
+    'Trabaje "todo dentro, todo fuera": un lote por nave y limpieza completa entre lotes.',
+    'Después de lavar y desinfectar, deje descansar la nave antes del siguiente lote.',
+    'La cama debe estar seca y suelta: la cama húmeda produce amoníaco y problemas de patas.',
+    'Registre el consumo de alimento todos los días: es la base para calcular la conversión.',
+    'Compare su postura con la tabla de la guía: una caída repentina es una señal temprana.',
+    'En postura, mantenga un programa de luz constante; los cambios bruscos afectan la producción.',
+    'Revise la uniformidad del lote: un lote parejo produce mejor.',
+    'Separe las aves enfermas y consulte a su veterinario ante cualquier cambio.',
+    'Anote cada vacuna y medicamento con su fecha, dosis y lote.',
+    'Limpie y desinfecte el equipo antes de pasarlo de una nave a otra.',
+    'Use ropa y botas exclusivas para cada nave siempre que pueda.',
+    'Revise los resultados de serología para confirmar que las vacunas protegieron.',
+    'Calcule el costo de alimento por docena o por kg de huevo: ayuda a decidir sus compras.',
+];
+const carga = { pct: 0, timer: null, consejos: null, usados: [] };
+function pintarCarga() {
+    const p = Math.round(carga.pct);
+    const relleno = $('#carga-relleno');
+    if (relleno) relleno.style.width = `${p}%`;
+    $('#carga-pct') && ($('#carga-pct').textContent = `${p} %`);
+    $('#carga-barra')?.setAttribute('aria-valuenow', String(p));
+}
+function siguienteConsejo() {
+    const caja = $('#consejo');
+    if (!caja) return;
+    if (carga.usados.length >= CONSEJOS.length) carga.usados = [];
+    const libres = CONSEJOS.map((_, i) => i).filter(i => !carga.usados.includes(i));
+    const i = libres[Math.floor(Math.random() * libres.length)];
+    carga.usados.push(i);
+    $('#consejo-texto').textContent = CONSEJOS[i];
+    caja.hidden = false;
+}
+function iniciarCarga(texto) {
+    if (texto) $('#loading-text').textContent = texto;
+    if (carga.timer) return;
+    carga.pct = 0;
+    pintarCarga();
+    siguienteConsejo();
+    carga.timer = setInterval(() => { carga.pct += (95 - carga.pct) * 0.025; pintarCarga(); }, 120);
+    carga.consejos = setInterval(siguienteConsejo, 7000);
+}
+async function terminarCarga() {
+    clearInterval(carga.timer); clearInterval(carga.consejos);
+    carga.timer = null; carga.consejos = null;
+    carga.pct = 100;
+    pintarCarga();
+    await new Promise(r => setTimeout(r, 250));
+}
+iniciarCarga();
+
 async function bootSession(forceRefresh = false) {
     showScreen('loading');
-    $('#loading-text').textContent = 'Cargando tu información…';
+    iniciarCarga('Cargando su información…');
     try {
         await loadSnapshot({ forceRefresh });
+        await terminarCarga();
         if (state.mustChangePassword) return showPasswordScreen();
         renderChrome();
         showScreen('app');
@@ -5270,6 +5391,7 @@ async function bootSession(forceRefresh = false) {
         render();
         avisosAlEntrar();
     } catch (e) {
+        await terminarCarga();
         if (ACCESS_CODES.has(e.code) || e.code === 'FORBIDDEN') return showAccessDenied(e);
         if (!(e instanceof ApiError)) console.error('[Granjas] Error al cargar la sesión:', e);
         showDenied('No se pudo conectar', e instanceof ApiError ? e.message : MSG.BAD_RESPONSE,
@@ -5322,6 +5444,7 @@ onAuthStateChanged(auth, (user) => {
     if (!user) {
         limpiarSesion();
         $('#login-form').reset();
+        terminarCarga();
         showScreen('login');
         mostrarHumano($('#humano'));
         return;

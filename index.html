@@ -41,8 +41,12 @@
             <img class="brand-logo" src="img/chiik-logo-claro.svg" alt="CHIIK" width="398" height="132">
             <span class="brand-tag">Registro avícola</span>
         </div>
-        <div class="spinner" aria-hidden="true"></div>
+        <div class="carga">
+            <div class="carga-barra" id="carga-barra" role="progressbar" aria-label="Cargando" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="carga-relleno"></span></div>
+            <span id="carga-pct" class="carga-pct">0 %</span>
+        </div>
         <p id="loading-text" class="muted">Cargando…</p>
+        <aside id="consejo" class="consejo" hidden><strong>Buena práctica</strong><p id="consejo-texto"></p></aside>
     </div>
 
     <!-- ===================== Pantalla: inicio de sesión ===================== -->
