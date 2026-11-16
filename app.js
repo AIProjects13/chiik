@@ -1062,6 +1062,79 @@ function filtrarLote(rows) {
     if (!lote && !genetica) return rows;
     return rows.filter(r => (!lote || r.LoteID === lote) && (!genetica || (r.LineaGenetica || loteById(r.LoteID)?.LineaGenetica) === genetica));
 }
+
+/** Campos "tabla" de la línea genética que se dibujan desde la guía (no desde los registros). */
+const CAMPOS_TABLA = ['PesoCorporalTabla', 'PesoTablaMinimo', 'PesoTablaMaximo', 'PosturaTabla', 'ConsumoTabla', 'MortalidadIdeal'];
+/**
+ * Tabla de la línea genética en TODO el rango elegido, aunque no haya registros (o las fechas aún no
+ * hayan pasado): para cada lote del contexto con línea genética y edad al iniciar, cada día del rango
+ * en que el lote existe (de su inicio a su cierre; abierto, hasta el final del rango) se calcula su
+ * edad y el valor de la guía, y se agrupa igual que los registros (semana de edad, día o mes). Varios
+ * lotes: promedio ponderado por sus aves iniciales. No inventa datos: es lo que publica la guía.
+ * → { grupos: Map(clave → {campo: valor}), geneticas: [con tabla] }
+ */
+function tablaProyectada(linea, agr) {
+    const out = { grupos: new Map(), geneticas: [] };
+    const tipo = tipoEstandar(linea);
+    if (!tipo) return out;
+    const { lote, genetica } = state.f;
+    const lotes = lotesDelContexto().filter(l => l.LineaGenetica && edadDias(l, l.FechaInicio) !== null
+        && (!lote || l.LoteID === lote) && (!genetica || l.LineaGenetica === genetica));
+    if (!lotes.length) return out;
+    const desde = state.f.desde || lotes.reduce((m, l) => (l.FechaInicio < m ? l.FechaInicio : m), '9999-12-31');
+    const hasta = state.f.hasta || today();
+    // Curvas de peso indexadas una vez (no se filtra la lista completa en cada día).
+    const curvas = new Map();
+    const curva = (gen) => {
+        if (!curvas.has(gen)) {
+            curvas.set(gen, state.db.estandares.filter(x => x.LineaGenetica === gen && x.Tipo === tipo)
+                .map(x => ({ d: Number(x.EdadDias), min: toNum(x.MinimoG), std: toNum(x.EstandarG), max: toNum(x.MaximoG) })).sort((p, q) => p.d - q.d));
+        }
+        return curvas.get(gen);
+    };
+    const pesoEn = (gen, dias) => {
+        const f = curva(gen);
+        if (!f.length || dias < f[0].d || dias > f[f.length - 1].d) return null;
+        let i = 0;
+        while (i < f.length - 1 && f[i + 1].d <= dias) i++;
+        const a = f[i], b = f[Math.min(i + 1, f.length - 1)];
+        const t = b.d === a.d ? 0 : (dias - a.d) / (b.d - a.d);
+        const mezcla = k => (a[k] === null || b[k] === null ? null : a[k] + (b[k] - a[k]) * t);
+        return { PesoCorporalTabla: mezcla('std'), PesoTablaMinimo: mezcla('min'), PesoTablaMaximo: mezcla('max') };
+    };
+    const acum = new Map();   // clave → { campo: [Σ valor × aves, Σ aves] }
+    const conTabla = new Set();
+    const DIA = 86400000;
+    lotes.forEach((l) => {
+        const ini = desde > l.FechaInicio ? desde : l.FechaInicio;
+        const fin = l.FechaCierre && l.FechaCierre < hasta ? l.FechaCierre : hasta;
+        if (ini > fin) return;
+        const aves = toNum(l.AvesIniciales) || navesDelLote(l).reduce((a, x) => a + (toNum(x.AvesIniciales) || 0), 0) || 1;
+        const [y, m, d] = ini.split('-').map(Number);
+        const t0 = Date.UTC(y, m - 1, d);
+        const edad0 = edadDias(l, ini);
+        for (let i = 0; i <= 1100; i++) {
+            const fecha = new Date(t0 + i * DIA).toISOString().slice(0, 10);
+            if (fecha > fin) break;
+            const dias = edad0 + i;
+            const v = pesoEn(l.LineaGenetica, dias) || {};
+            ['PosturaTabla', 'ConsumoTabla', 'MortalidadIdeal'].forEach((k) => { v[k] = produccionEsperada(l.LineaGenetica, tipo, k, dias); });
+            if (!CAMPOS_TABLA.some(k => v[k] !== null && v[k] !== undefined)) continue;
+            conTabla.add(l.LineaGenetica);
+            const clave = agr === 'semana' ? `E${String(Math.floor(dias / 7)).padStart(3, '0')}` : periodo(fecha, agr);
+            if (!acum.has(clave)) acum.set(clave, {});
+            const g = acum.get(clave);
+            CAMPOS_TABLA.forEach((k) => {
+                if (v[k] === null || v[k] === undefined) return;
+                const s = g[k] || (g[k] = [0, 0]);
+                s[0] += v[k] * aves; s[1] += aves;
+            });
+        }
+    });
+    acum.forEach((g, clave) => out.grupos.set(clave, Object.fromEntries(Object.entries(g).map(([k, [s, w]]) => [k, s / w]))));
+    out.geneticas = [...conTabla].sort();
+    return out;
+}
 /**
  * Aviso de las líneas genéticas sin tabla cargada (peso, y en postura también la producción) y de los
  * lotes sin edad al iniciar: sin eso no se puede dibujar el estándar ni el ideal.
@@ -1195,6 +1268,60 @@ function indicadoresLotes(regs, linea) {
     return out;
 }
 
+/**
+ * Gráficos de tendencia por periodo. Por semana: semana de EDAD del lote ("Semana 23"); día y mes,
+ * de calendario. El eje cubre los periodos con registros Y los de la tabla de la línea genética en todo
+ * el rango (`proy`, de tablaProyectada): la tabla se ve aunque falten datos o las fechas no hayan pasado.
+ */
+function tendencias(linea, regs, campos, agr, proy, contextoRango) {
+    const pc = k => campoDe(linea, k);
+    const grupos = aggregate(regs, campos.concat(CAMPOS_BANDA), x => (agr === 'semana' ? claveSemana(x) : periodo(x.Fecha, agr)));
+    const porClave = new Map(grupos.map(g => [g.key, g]));
+    const claves = [...new Set(grupos.map(g => g.key).concat([...proy.grupos.keys()]))].sort();
+    const labels = claves.map(k => periodoLabel(k, agr));
+    // Valor de un campo en un periodo: los campos de tabla, de la guía (si no la hay, lo que traigan los
+    // registros, p. ej. un estándar escrito a mano); los demás, de los registros.
+    const valor = (clave, c) => {
+        if (CAMPOS_TABLA.includes(c.k)) {
+            const v = proy.grupos.get(clave)?.[c.k];
+            if (v !== undefined && v !== null) return c.peso ? round(enUnidad(v), decimalesPeso()) : round(v);
+        }
+        const g = porClave.get(clave);
+        return g ? gShow(g, c) : null;
+    };
+    // Nombre de la serie de tabla según las líneas genéticas que tienen tabla: una (su nombre) o varias
+    // (el promedio ponderado por aves de las que la tienen).
+    const genDe = r => r.LineaGenetica || loteById(r.LoteID)?.LineaGenetica;
+    const genTodas = [...new Set(regs.map(genDe).concat(proy.geneticas).filter(Boolean))];
+    const nombreTabla = (name, key) => {
+        const con = genTodas.filter(g => proy.geneticas.includes(g) || regs.some(r => genDe(r) === g && toNum(r[key]) !== null));
+        if (genTodas.length <= 1) return genTodas.length ? `${name} · ${genTodas[0]}` : name;
+        if (con.length === 1) return `${name} · ${con[0]} (las demás no tienen tabla)`;
+        return con.length ? `${name} (promedio de ${con.length} líneas genéticas)` : name;
+    };
+    const sub = `${contextoRango} · por ${AGRUPAR.find(a => a[0] === agr)[1].toLowerCase()}`;
+    // Con varios lotes juntos, la mortalidad acumulada de cada periodo es la de los lotes que tienen datos
+    // en él (Σ muertas ÷ Σ aves iniciales): sube o baja cuando entra o sale un lote. Se dice en la leyenda.
+    const nLotes = new Set(regs.map(r => r.LoteID).filter(Boolean)).size;
+    const nombreReal = (key, name) => (key === 'MortalidadAcumuladaPorcentaje' && nLotes > 1 ? `${name} (${nLotes} lotes juntos; filtre por lote para ver uno)` : name);
+    return '<div class="grid-2">' + CHARTS[linea].map((def) => {
+        const spec = {
+            title: def.peso ? `${def.title} (${state.unidad})` : def.title, subtitle: sub, icon: def.icon, type: def.type,
+            unit: def.peso ? state.unidad : def.unit, labels,
+            series: def.series.map(([key, name, color, dashed]) => ({
+                name: dashed ? nombreTabla(name, key) : nombreReal(key, name), color: PALETTE[color], dashed, stack: def.stack ? 'h' : undefined,
+                data: claves.map(k => { const c = pc(key); return c ? valor(k, c) : null; }),
+            })),
+        };
+        // Banda mín–máx de la tabla de la línea genética (solo si la guía la publica).
+        if (def.banda) {
+            const lo = claves.map(k => valor(k, CAMPOS_BANDA[0])), hi = claves.map(k => valor(k, CAMPOS_BANDA[1]));
+            if (lo.some(v => v !== null)) spec.band = { name: 'Rango de la tabla', lo, hi, color: PALETTE.rango };
+        }
+        return chartCard(`${linea}-${def.id}`, spec);
+    }).join('') + '</div>';
+}
+
 function viewDashboard() {
     const ids = ctxIds();
     if (!ids.length) return noGranjas();
@@ -1217,7 +1344,12 @@ function viewDashboard() {
 
     let html = head;
     if (r.data.truncado) html += alertBox('warn', 'alert-triangle', 'Hay más registros de los que se pueden analizar a la vez. Reduce el rango de fechas para ver todo.');
-    if (!regs.length) return html + sinEstructura(linea) + emptyState(`No hay registros de ${linea.toLowerCase()} en el rango seleccionado.`, 'chart-line');
+    const proy = tablaProyectada(linea, agr);
+    if (!regs.length && !proy.grupos.size) return html + sinEstructura(linea) + emptyState(`No hay registros de ${linea.toLowerCase()} en el rango seleccionado.`, 'chart-line');
+    if (!regs.length) {
+        html += alertBox('info', 'info', `No hay registros de ${linea.toLowerCase()} en el rango seleccionado. Se muestra solo la tabla de la línea genética de los lotes, para comparar cuando se registren datos.`);
+        return html + tendencias(linea, regs, campos, agr, proy, `${contexto} · ${rango}`);
+    }
 
     // KPIs del rango completo
     const tot = aggregate(regs, campos, () => 'total')[0];
@@ -1247,37 +1379,7 @@ function viewDashboard() {
     html += panorama(linea, regs, campos, tot, rango);
 
     html += avisoTablas(regs, linea);
-    // Nombre de la serie de tabla según las líneas genéticas que hay en lo que se muestra: una (su nombre)
-    // o varias (el promedio de las que tienen tabla).
-    const genDe = r => r.LineaGenetica || loteById(r.LoteID)?.LineaGenetica;
-    const genTodas = [...new Set(regs.map(genDe).filter(Boolean))];
-    const nombreTabla = (name, key) => {
-        const con = genTodas.filter(g => regs.some(r => genDe(r) === g && toNum(r[key]) !== null));
-        if (genTodas.length <= 1) return genTodas.length ? `${name} · ${genTodas[0]}` : name;
-        if (con.length === 1) return `${name} · ${con[0]} (las demás no tienen tabla)`;
-        return con.length ? `${name} (promedio de ${con.length} líneas genéticas)` : name;
-    };
-    // Tendencias por periodo
-    // Por semana: semana de EDAD del lote ("Semana 23"); día y mes, de calendario.
-    const grupos = aggregate(regs, campos.concat(CAMPOS_BANDA), x => (agr === 'semana' ? claveSemana(x) : periodo(x.Fecha, agr)));
-    const labels = grupos.map(g => periodoLabel(g.key, agr));
-    const sub = `${contexto} · ${rango} · por ${AGRUPAR.find(a => a[0] === agr)[1].toLowerCase()}`;
-    html += '<div class="grid-2">' + CHARTS[linea].map((def) => {
-        const spec = {
-            title: def.peso ? `${def.title} (${state.unidad})` : def.title, subtitle: sub, icon: def.icon, type: def.type,
-            unit: def.peso ? state.unidad : def.unit, labels,
-            series: def.series.map(([key, name, color, dashed]) => ({
-                name: dashed ? nombreTabla(name, key) : name, color: PALETTE[color], dashed, stack: def.stack ? 'h' : undefined,
-                data: grupos.map(g => { const c = pc(key); return c ? gShow(g, c) : null; }),
-            })),
-        };
-        // Banda mín–máx de la tabla de la línea genética (solo si hay datos).
-        if (def.banda) {
-            const lo = grupos.map(g => gShow(g, CAMPOS_BANDA[0])), hi = grupos.map(g => gShow(g, CAMPOS_BANDA[1]));
-            if (lo.some(v => v !== null)) spec.band = { name: 'Rango de la tabla', lo, hi, color: PALETTE.rango };
-        }
-        return chartCard(`${linea}-${def.id}`, spec);
-    }).join('') + '</div>';
+    html += tendencias(linea, regs, campos, agr, proy, `${contexto} · ${rango}`);
 
     // Comparativo: por granja (admin con varias) o por nave (una granja), en tabla.
     const variasGranjas = varias() && new Set(regs.map(x => x.GranjaID)).size > 1;
@@ -1294,7 +1396,8 @@ function viewDashboard() {
         });
     }
 
-    // Resumen por periodo
+    // Resumen por periodo (solo los periodos con registros)
+    const grupos = aggregate(regs, campos, x => (agr === 'semana' ? claveSemana(x) : periodo(x.Fecha, agr)));
     html += table('resumen', {
         title: `Resumen por ${AGRUPAR.find(a => a[0] === agr)[1].toLowerCase()}`, icon: 'calendar-range', csv: `resumen-${linea}-${agr}`,
         columns: [{ k: 'key', l: 'Periodo', sticky: true, html: x => esc(periodoLabel(x.key, agr)), csv: x => x.key }, { k: 'n', l: 'Registros', t: 'num' }]
