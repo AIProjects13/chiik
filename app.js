@@ -1383,9 +1383,9 @@ function viewDashboard() {
 
     // Comparativo: por granja (admin con varias) o por nave (una granja), en tabla.
     const variasGranjas = varias() && new Set(regs.map(x => x.GranjaID)).size > 1;
-    const porNave = !variasGranjas && new Set(regs.map(x => x.NaveID).filter(Boolean)).size > 1;
+    const porNave = !variasGranjas && new Set(regs.map(claveNave)).size > 1;
     if (variasGranjas || porNave) {
-        const clave = variasGranjas ? (x => x.GranjaID) : (x => x.NaveID || '—');
+        const clave = variasGranjas ? (x => x.GranjaID) : claveNave;
         const nombre = variasGranjas ? granjaName : nombreNave;
         const grupo = aggregate(regs, campos, clave);
         html += table('comparativo', {
@@ -1407,7 +1407,16 @@ function viewDashboard() {
     return html;
 }
 
+/** Clave de nave de un registro; uno hecho "por lote" (todas sus naves juntas) va con su lote: "L:<LoteID>". */
+const claveNave = x => x.NaveID || (x.LoteID ? 'L:' + x.LoteID : '—');
 function nombreNave(id) {
+    if (String(id).startsWith('L:')) {
+        const l = loteById(id.slice(2));
+        if (!l) return '—';
+        const naves = navesDelLote(l).map(x => naveById(x.NaveID)).filter(Boolean);
+        const sector = [...new Set(naves.map(n => sectorById(n.SectorID)?.Nombre).filter(Boolean))].join(', ');
+        return `${sector ? sector + ' / ' : ''}${naves.map(n => n.Nombre).join(', ')} (lote ${l.NumeroLote})`;
+    }
     const n = naveById(id);
     return n ? `${sectorById(n.SectorID)?.Nombre || ''} / ${n.Nombre}` : '—';
 }
@@ -1455,7 +1464,7 @@ function panorama(linea, regs, campos, tot, rango) {
             const l = x.LoteID && loteById(x.LoteID);
             if (l ? l.Estado !== 'Activo' : naveById(x.NaveID)?.Estado !== 'Activo') return;
             const v = Math.max(0, (toNum(x.NumeroAves) || 0) - (toNum(x.MortalidadNominal) || 0) - (toNum(x.OtrasSalidas) || 0));
-            const k = porGranja ? granjaName(x.GranjaID) : nombreNave(x.NaveID);
+            const k = porGranja ? granjaName(x.GranjaID) : nombreNave(claveNave(x));
             suma.set(k, (suma.get(k) || 0) + v);
         });
         const filas = [...suma.entries()].sort((a, b) => b[1] - a[1]);
@@ -1468,11 +1477,11 @@ function panorama(linea, regs, campos, tot, rango) {
     tarjetas.push(chartCard(`${linea}-dona`, { type: 'donut', icon: 'chart-column', subtitle: rango, ...d }));
     // 3. Comparativo horizontal (solo si hay más de una granja o nave)
     const variasGranjas = varias() && new Set(regs.map(x => x.GranjaID)).size > 1;
-    const porNave = !variasGranjas && new Set(regs.map(x => x.NaveID).filter(Boolean)).size > 1;
+    const porNave = !variasGranjas && new Set(regs.map(claveNave)).size > 1;
     if (variasGranjas || porNave) {
         const [real, tabla, titulo] = COMPARATIVO[linea];
         const cReal = pc(real), cTabla = tabla && pc(tabla);
-        const grupo = aggregate(regs, campos, variasGranjas ? (x => x.GranjaID) : (x => x.NaveID || '—'))
+        const grupo = aggregate(regs, campos, variasGranjas ? (x => x.GranjaID) : claveNave)
             .map(gr => ({ nombre: variasGranjas ? granjaName(gr.key) : nombreNave(gr.key), v: gShow(gr, cReal), t: cTabla ? gShow(gr, cTabla) : null }))
             .sort((a, b) => (b.v ?? -Infinity) - (a.v ?? -Infinity));
         const unidad = cReal.peso ? state.unidad : linea === 'Postura' || linea === 'Incubadora' ? '%' : '';
