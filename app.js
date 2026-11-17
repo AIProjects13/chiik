@@ -1383,11 +1383,19 @@ function viewDashboard() {
 
     // Comparativo: por granja (admin con varias) o por nave (una granja), en tabla.
     const variasGranjas = varias() && new Set(regs.map(x => x.GranjaID)).size > 1;
-    const porNave = !variasGranjas && new Set(regs.map(claveNave)).size > 1;
+    // Naves activas de la línea (de la granja y del sector/nave elegidos) sin registros en el rango:
+    // también se listan (con 0), salvo si se filtra por lote o línea genética.
+    const sinDatos = variasGranjas || state.f.lote || state.f.genetica ? [] : (() => {
+        const conDatos = new Set(regs.flatMap(x => (x.NaveID ? [x.NaveID] : x.LoteID && loteById(x.LoteID) ? navesDelLote(loteById(x.LoteID)).map(v => v.NaveID) : [])));
+        return ctxIds().flatMap(gid => navesActivas(gid, linea)).map(x => x.n)
+            .filter(n => !conDatos.has(n.NaveID) && (!ub.SectorID || n.SectorID === ub.SectorID) && (!ub.NaveID || n.NaveID === ub.NaveID));
+    })();
+    const porNave = !variasGranjas && new Set(regs.map(claveNave)).size + sinDatos.length > 1;
     if (variasGranjas || porNave) {
         const clave = variasGranjas ? (x => x.GranjaID) : claveNave;
         const nombre = variasGranjas ? granjaName : nombreNave;
         const grupo = aggregate(regs, campos, clave);
+        sinDatos.forEach(n => grupo.push({ key: n.NaveID, n: 0, s: {}, c: {}, w: {}, wd: {}, last: new Map(), alim: 0, gan: 0, qqDoc: 0, huevos: 0 }));
         html += table('comparativo', {
             title: `Comparativo por ${variasGranjas ? 'granja' : 'nave'}`, icon: variasGranjas ? 'warehouse' : 'house', csv: `comparativo-${linea}`,
             columns: [{ k: 'nombre', l: variasGranjas ? 'Granja' : 'Nave', sticky: true }, { k: 'n', l: 'Registros', t: 'num' }]
