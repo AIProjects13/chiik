@@ -1458,13 +1458,14 @@ function panorama(linea, regs, campos, tot, rango) {
             const k = porGranja ? granjaName(x.GranjaID) : nombreNave(x.NaveID);
             suma.set(k, (suma.get(k) || 0) + v);
         });
-        let filas = [...suma.entries()].sort((a, b) => b[1] - a[1]);
-        if (filas.length > 6) filas = filas.slice(0, 5).concat([['Otras', filas.slice(5).reduce((a, f) => a + f[1], 0)]]);
-        d = { title: `Aves vivas por ${porGranja ? 'granja' : 'nave'} (lotes abiertos)`, labels: filas.map(f => f[0]), values: filas.map(f => f[1]),
-            colors: filas.map((f, i) => (f[0] === 'Otras' ? PALETTE.tabla : PALETTE.cat[i])), centerLabel: 'aves' };
+        const filas = [...suma.entries()].sort((a, b) => b[1] - a[1]);
+        const titulo = `Aves vivas por ${porGranja ? 'granja' : 'nave'} (lotes abiertos)`;
+        // Hasta 6 partes, dona; con más, barras horizontales con TODAS (sin agrupar en "Otras").
+        d = filas.length > PALETTE.cat.length
+            ? { type: 'hbar', title: titulo, labels: filas.map(f => f[0]), values: filas.map(f => f[1]), unit: '', valueName: 'Aves vivas' }
+            : { title: titulo, labels: filas.map(f => f[0]), values: filas.map(f => f[1]), colors: filas.map((f, i) => PALETTE.cat[i]), centerLabel: 'aves' };
     }
     tarjetas.push(chartCard(`${linea}-dona`, { type: 'donut', icon: 'chart-column', subtitle: rango, ...d }));
-
     // 3. Comparativo horizontal (solo si hay más de una granja o nave)
     const variasGranjas = varias() && new Set(regs.map(x => x.GranjaID)).size > 1;
     const porNave = !variasGranjas && new Set(regs.map(x => x.NaveID).filter(Boolean)).size > 1;
