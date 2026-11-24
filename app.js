@@ -707,7 +707,7 @@ function badgeIec(v, nivel) {
 /**
  * columns: [{ k, l, t: 'text'|'num'|'date'|'datetime', get?(r), html?(r), csv?(r), sticky?, wrap?, nocsv? }]
  */
-function table(id, { title, icon = 'table', columns, rows, actions, rowClass, empty = 'No hay datos para mostrar.', csv }) {
+function table(id, { title, icon = 'table', columns, rows, actions, rowClass, empty = 'No hay datos para mostrar.', csv, sinExcel = false }) {
     tables[id] = { title, columns, rows, actions, rowClass, empty, csv };
     const n = visibleRows(id).length;
     return `<div class="card table-card">
@@ -715,7 +715,7 @@ function table(id, { title, icon = 'table', columns, rows, actions, rowClass, em
             <h3>${ico(icon)}${esc(title)} <span class="badge badge-muted" id="tcount-${id}">${nf.format(n)}</span></h3>
             <div class="tools">
                 <div class="search">${ico('search', 'icon-sm')}<input class="input" type="search" placeholder="Buscar en la tabla" aria-label="Buscar en ${esc(title)}" data-input="table-q" data-table="${id}" value="${esc(state.q[id] || '')}"></div>
-                ${incluye('descargarExcel', ctxIds(), null) ? `<button type="button" class="btn btn-sm" data-action="xlsx" data-table="${id}" title="Descargar en Excel">${ico('file-spreadsheet')}Excel</button>` : ''}
+                ${!sinExcel && incluye('descargarExcel', ctxIds(), null) ? `<button type="button" class="btn btn-sm" data-action="xlsx" data-table="${id}" title="Descargar en Excel">${ico('file-spreadsheet')}Excel</button>` : ''}
             </div>
         </div>
         <div class="table-wrap" id="tw-${id}">${tableInner(id)}</div>
@@ -1530,6 +1530,7 @@ function viewRegistros() {
     if (r.data.truncado) html += alertBox('warn', 'alert-triangle', `Se muestran los ${nf.format(r.data.registros.length)} registros más recientes de ${nf.format(r.data.total)}. Reduce el rango de fechas para ver los demás.`);
     html += table('registros', {
         title: `Registros de ${linea.toLowerCase()}`, icon: LINEA_ICON[linea], csv: `registros-${linea}`,
+        sinExcel: true,   // a pedido del cliente: los registros diarios no se descargan en Excel (todas las líneas)
         empty: `No hay registros de ${linea.toLowerCase()} en el rango seleccionado.`,
         columns, rows: filtrarLote(r.data.registros),
         rowClass: x => (x.Estado !== 'Activo' ? 'is-deleted' : ''),
