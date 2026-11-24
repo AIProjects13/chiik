@@ -4411,7 +4411,19 @@ async function importarPorTandas(tipo, payloads, archivo, confirmar, avance) {
     const out = { resultados: [], listos: 0, guardados: 0, duplicados: 0, errores: 0 };
     for (let i = 0; i < payloads.length; i += TANDA_IMPORTAR) {
         const parte = payloads.slice(i, i + TANDA_IMPORTAR);
-        const res = await withBusy(() => api('importarDatos', { tipo, filas: parte, archivo, confirmar }));
+        let res;
+        try {
+            res = await withBusy(() => api('importarDatos', { tipo, filas: parte, archivo, confirmar }));
+        } catch (e) {
+            // Cada tanda se guarda completa o no se guarda: lo anterior ya quedó y volver a subir el archivo es seguro.
+            if (confirmar && i > 0 && ['NETWORK', 'BAD_RESPONSE'].includes(e.code)) {
+                throw new Error(`Se guardaron ${nf.format(out.guardados)} filas y luego se cortó la conexión. Vuelva a subir el mismo archivo: las filas ya guardadas aparecerán como repetidas y se guardará solo lo que falta.`);
+            }
+            if (['NETWORK', 'BAD_RESPONSE'].includes(e.code)) {
+                throw new Error('Se cortó la conexión con el servidor. Vuelva a subir el archivo: lo que ya se haya guardado aparecerá como repetido y no se duplica.');
+            }
+            throw e;
+        }
         res.resultados.forEach(r => out.resultados.push({ ...r, fila: r.fila + i }));
         ['listos', 'guardados', 'duplicados', 'errores'].forEach((k) => { out[k] += res[k] || 0; });
         avance?.(Math.min(i + TANDA_IMPORTAR, payloads.length), payloads.length);
