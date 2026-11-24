@@ -4407,6 +4407,24 @@ async function leerImport(archivo, tipo, granjaId, linea) {
  * y se juntan los resultados. `avance(hechas, total)` permite mostrar el progreso.
  */
 const TANDA_IMPORTAR = 300;
+
+/** Contadores de la revisión de una carga: un clic muestra solo ese estado en la tabla; otro clic, todas. */
+function chipsRevision(items) {
+    return `<div class="chips">${items.map(([estado, texto, clase, n]) => `<button type="button" class="badge ${clase} chip-filtro" data-imp-filtro="${estado}" aria-pressed="false"${n ? ' title="Mostrar solo estas filas"' : ' disabled'}>${texto}</button>`).join('')}</div>`;
+}
+function activarFiltroRevision(box) {
+    if (box.dataset.filtro) return;
+    box.dataset.filtro = '1';
+    box.addEventListener('click', (ev) => {
+        const b = ev.target.closest('[data-imp-filtro]');
+        if (!b) return;
+        const activo = b.getAttribute('aria-pressed') !== 'true';
+        box.querySelectorAll('[data-imp-filtro]').forEach(x => x.setAttribute('aria-pressed', String(x === b && activo)));
+        box.querySelectorAll('tr[data-estado]').forEach((tr) => { tr.hidden = activo && tr.dataset.estado !== b.dataset.impFiltro; });
+        const pista = box.querySelector('[data-imp-pista]');
+        if (pista) pista.hidden = activo;
+    });
+}
 async function importarPorTandas(tipo, payloads, archivo, confirmar, avance) {
     const out = { resultados: [], listos: 0, guardados: 0, duplicados: 0, errores: 0 };
     for (let i = 0; i < payloads.length; i += TANDA_IMPORTAR) {
@@ -4474,11 +4492,13 @@ async function openImportarModal(tipo) {
             const box = form.querySelector('[data-imp-revision]');
             box.hidden = false;
             box.innerHTML = `<h3>${ico('list-checks')}3. Revise antes de guardar</h3>
-                <div class="chips"><span class="badge badge-ok">${n('listo')} listas</span><span class="badge badge-warn">${n('duplicado')} repetidas (se saltan)</span><span class="badge badge-danger">${n('error')} con error</span></div>
+                ${chipsRevision([['listo', `${nf.format(n('listo'))} listas`, 'badge-ok', n('listo')], ['duplicado', `${nf.format(n('duplicado'))} repetidas (se saltan)`, 'badge-warn', n('duplicado')], ['error', `${nf.format(n('error'))} con error`, 'badge-danger', n('error')]])}
+                <p class="muted center small">Toque un contador para ver solo esas filas.</p>
                 <div class="table-wrap import-tabla"><table><thead><tr><th>Fila</th><th>Dato</th><th>Estado</th><th>Motivo</th></tr></thead><tbody>
-                ${revision.map(r => `<tr><td>${r.excel}</td><td>${esc(r.etiqueta || '—')}</td><td>${r.estado === 'listo' ? '<span class="badge badge-ok">Lista</span>' : r.estado === 'duplicado' ? '<span class="badge badge-warn">Repetida</span>' : '<span class="badge badge-danger">Error</span>'}</td><td>${esc(r.mensaje || '')}</td></tr>`).join('')}
+                ${revision.map(r => `<tr data-estado="${r.estado}"><td>${r.excel}</td><td>${esc(r.etiqueta || '—')}</td><td>${r.estado === 'listo' ? '<span class="badge badge-ok">Lista</span>' : r.estado === 'duplicado' ? '<span class="badge badge-warn">Repetida</span>' : '<span class="badge badge-danger">Error</span>'}</td><td>${esc(r.mensaje || '')}</td></tr>`).join('')}
                 </tbody></table></div>
                 ${n('listo') ? '' : '<p class="muted">No hay filas para guardar. Corrija el archivo y vuelva a subirlo.</p>'}`;
+            activarFiltroRevision(box);
             btn.textContent = n('listo') ? `Guardar ${n('listo')} ${n('listo') === 1 ? 'fila' : 'filas'}` : 'Revisar archivo';
             if (!n('listo')) revision = null;
             box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -4631,13 +4651,15 @@ async function openFormatoSemanalModal() {
             // Se muestran los errores y repetidos completos; de las listas, las primeras (pueden ser miles).
             const mostrar = revision.filter(r => r.estado !== 'listo').concat(revision.filter(r => r.estado === 'listo').slice(0, 150));
             box.innerHTML = `<h3>${ico('list-checks')}3. Revise antes de guardar</h3>
-                <div class="chips"><span class="badge badge-ok">${nf.format(n('listo'))} listos</span><span class="badge badge-warn">${nf.format(n('duplicado'))} ya estaban (se saltan)</span><span class="badge badge-danger">${nf.format(n('error'))} con error</span></div>
+                ${chipsRevision([['listo', `${nf.format(n('listo'))} listos`, 'badge-ok', n('listo')], ['duplicado', `${nf.format(n('duplicado'))} ya estaban (se saltan)`, 'badge-warn', n('duplicado')], ['error', `${nf.format(n('error'))} con error`, 'badge-danger', n('error')]])}
+                <p class="muted center small">Toque un contador para ver solo esas filas.</p>
                 ${revision.some(r => r.aviso) ? alertBox('info', 'info', `${revision.filter(r => r.aviso).length} filas con la edad distinta a la de la app (se guardan igual; revise la edad al iniciar del lote).`) : ''}
                 <div class="table-wrap import-tabla"><table><thead><tr><th>Dato</th><th>Estado</th><th>Motivo</th></tr></thead><tbody>
-                ${mostrar.map(r => `<tr><td>${esc(r.etiqueta)}</td><td>${r.estado === 'listo' ? '<span class="badge badge-ok">Listo</span>' : r.estado === 'duplicado' ? '<span class="badge badge-warn">Ya estaba</span>' : '<span class="badge badge-danger">Error</span>'}</td><td>${esc(r.mensaje || r.aviso || '')}</td></tr>`).join('')}
+                ${mostrar.map(r => `<tr data-estado="${r.estado}"><td>${esc(r.etiqueta)}</td><td>${r.estado === 'listo' ? '<span class="badge badge-ok">Listo</span>' : r.estado === 'duplicado' ? '<span class="badge badge-warn">Ya estaba</span>' : '<span class="badge badge-danger">Error</span>'}</td><td>${esc(r.mensaje || r.aviso || '')}</td></tr>`).join('')}
                 </tbody></table></div>
-                ${n('listo') > 150 ? `<p class="muted center">Se muestran 150 de los ${nf.format(n('listo'))} listos.</p>` : ''}
+                ${n('listo') > 150 ? `<p class="muted center" data-imp-pista>Se muestran 150 de los ${nf.format(n('listo'))} listos.</p>` : ''}
                 ${compras.length ? `<label class="check"><input type="checkbox" name="compras" checked> Cargar también ${compras.length} compras de concentrado (cuadro "ALIMENTO" de cada semana; las que ya estén se saltan)</label>` : ''}`;
+            activarFiltroRevision(box);
             btn.textContent = n('listo') ? `Guardar ${nf.format(n('listo'))} ${n('listo') === 1 ? 'registro' : 'registros'}` : 'Revisar';
             if (!n('listo')) revision = null;
             box.scrollIntoView({ behavior: 'smooth', block: 'start' });

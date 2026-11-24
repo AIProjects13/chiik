@@ -356,6 +356,9 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .search input { padding-left: 38px; min-height: 38px; width: 220px; max-width: 100%; }
 .table-wrap { width: 100%; overflow: auto; border-radius: var(--r-md); box-shadow: var(--inset-sm); max-height: 70vh; -webkit-overflow-scrolling: touch; }
 .import-tabla { max-height: 320px; }
+.chip-filtro { border: 1px solid transparent; cursor: pointer; font: inherit; }
+.chip-filtro:disabled { cursor: default; opacity: .6; }
+.chip-filtro[aria-pressed="true"] { border-color: currentColor; box-shadow: 0 0 0 2px currentColor inset; }
 .import-tabla table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .import-tabla th, .import-tabla td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
 .import-tabla th { position: sticky; top: 0; background: var(--surface, #fff); }
